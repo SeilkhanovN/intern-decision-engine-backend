@@ -2,11 +2,15 @@ package ee.taltech.inbankbackend.service;
 
 import com.github.vladislavgoltjajev.personalcode.locale.estonia.EstonianPersonalCodeValidator;
 import ee.taltech.inbankbackend.config.DecisionEngineConstants;
+import ee.taltech.inbankbackend.exceptions.InvalidAgeException;
 import ee.taltech.inbankbackend.exceptions.InvalidLoanAmountException;
 import ee.taltech.inbankbackend.exceptions.InvalidLoanPeriodException;
 import ee.taltech.inbankbackend.exceptions.InvalidPersonalCodeException;
 import ee.taltech.inbankbackend.exceptions.NoValidLoanException;
 import org.springframework.stereotype.Service;
+
+import java.time.LocalDate;
+import java.time.Period;
 
 /**
  * A service class that provides a method for calculating an approved loan amount and period for a customer.
@@ -34,12 +38,16 @@ public class DecisionEngine {
      * @throws InvalidLoanAmountException If the requested loan amount is invalid
      * @throws InvalidLoanPeriodException If the requested loan period is invalid
      * @throws NoValidLoanException If there is no valid loan found for the given ID code, loan amount and loan period
+     * @throws InvalidAgeException If the customer's age does not meet requirements
      */
     public Decision calculateApprovedLoan(String personalCode, Long loanAmount, int loanPeriod)
             throws InvalidPersonalCodeException, InvalidLoanAmountException, InvalidLoanPeriodException,
-            NoValidLoanException {
+            NoValidLoanException, InvalidAgeException {
         // Validate inputs - always throw exceptions for consistency instead of returning a Decision
         verifyInputs(personalCode, loanAmount, loanPeriod);
+        
+        // Verify age restrictions
+        verifyAgeRestrictions(personalCode, loanPeriod);
 
         creditModifier = getCreditModifier(personalCode);
 
@@ -82,6 +90,108 @@ public class DecisionEngine {
         } catch (Exception e) {
             e.printStackTrace();
             throw new NoValidLoanException("No valid loan found: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Verifies that customer's age meets the requirements for loan approval.
+     * Customers must be at least 18 years old and not exceed the maximum age for their country.
+     * 
+     * @param personalCode Customer's personal code
+     * @param loanPeriod Requested loan period in months
+     * @throws InvalidAgeException If customer's age doesn't meet requirements
+     * @throws InvalidPersonalCodeException If personal code format is invalid
+     */
+    private void verifyAgeRestrictions(String personalCode, int loanPeriod) throws InvalidAgeException, InvalidPersonalCodeException {
+        if (!validator.isValid(personalCode)) {
+            throw new InvalidPersonalCodeException("Invalid personal ID code!");
+        }
+        
+        // Calculate customer's age
+        int age = calculateAge(personalCode);
+        
+        // Check if customer is at least 18 years old
+        if (age < DecisionEngineConstants.MINIMUM_AGE) {
+            throw new InvalidAgeException("Customer is underage. Minimum age for loan approval is " 
+                    + DecisionEngineConstants.MINIMUM_AGE + " years.");
+        }
+        
+        // Determine customer's country and corresponding expected lifetime
+        int expectedLifetime = determineExpectedLifetime(personalCode);
+        
+        // Maximum age = expected lifetime - loan period in years
+        int loanPeriodInYears = (int) Math.ceil(loanPeriod / 12.0);
+        int maximumAge = expectedLifetime - loanPeriodInYears;
+        
+        // Check if customer's age doesn't exceed maximum
+        if (age > maximumAge) {
+            throw new InvalidAgeException("Customer exceeds maximum age for loan approval in their country.");
+        }
+    }
+    
+    /**
+     * Calculates customer's age based on their personal code.
+     * Estonian personal code format: GYYMMDDSSSC, where:
+     * - G is gender/century (3-4 for 1900s, 5-6 for 2000s, 1-2 for 1800s)
+     * - YYMMDD is date of birth
+     * - SSS is a serial number
+     * - C is a checksum
+     * 
+     * @param personalCode Customer's personal code
+     * @return Customer's age in years
+     */
+    private int calculateAge(String personalCode) {
+        // Get century indicator digit
+        int centuryDigit = Character.getNumericValue(personalCode.charAt(0));
+        
+        // Determine birth year
+        int year;
+        if (centuryDigit == 3 || centuryDigit == 4) {
+            // 1900s
+            year = 1900 + Integer.parseInt(personalCode.substring(1, 3));
+        } else if (centuryDigit == 5 || centuryDigit == 6) {
+            // 2000s
+            year = 2000 + Integer.parseInt(personalCode.substring(1, 3));
+        } else {
+            // 1800s
+            year = 1800 + Integer.parseInt(personalCode.substring(1, 3));
+        }
+        
+        // Determine birth month and day
+        int month = Integer.parseInt(personalCode.substring(3, 5));
+        int day = Integer.parseInt(personalCode.substring(5, 7));
+        
+        // Calculate age
+        LocalDate birthDate = LocalDate.of(year, month, day);
+        LocalDate currentDate = LocalDate.now();
+        
+        return Period.between(birthDate, currentDate).getYears();
+    }
+    
+    /**
+     * Determines expected lifetime based on customer's country.
+     * 
+     * The method uses the 8th digit of the personal code modulo 3:
+     * - Remainder 0: Estonian
+     * - Remainder 1: Latvian  
+     * - Remainder 2: Lithuanian
+     * 
+     * @param personalCode Customer's personal code
+     * @return Expected lifetime in years for customer's country
+     */
+    private int determineExpectedLifetime(String personalCode) {
+        int eighthDigit = Character.getNumericValue(personalCode.charAt(7));
+        int remainder = eighthDigit % 3;
+        
+        if (remainder == 0) {
+            // Estonian personal code
+            return DecisionEngineConstants.ESTONIA_EXPECTED_LIFETIME;
+        } else if (remainder == 1) {
+            // Latvian personal code
+            return DecisionEngineConstants.LATVIA_EXPECTED_LIFETIME;
+        } else {
+            // Lithuanian personal code
+            return DecisionEngineConstants.LITHUANIA_EXPECTED_LIFETIME;
         }
     }
 

@@ -1,5 +1,6 @@
 package ee.taltech.inbankbackend.endpoint;
 
+import ee.taltech.inbankbackend.exceptions.InvalidAgeException;
 import ee.taltech.inbankbackend.exceptions.InvalidLoanAmountException;
 import ee.taltech.inbankbackend.exceptions.InvalidLoanPeriodException;
 import ee.taltech.inbankbackend.exceptions.InvalidPersonalCodeException;
@@ -35,6 +36,7 @@ public class DecisionEngineController {
      * requested loan amount, and loan period.<br><br>
      * - If the loan amount or period is invalid, the endpoint returns a bad request response with an error message.<br>
      * - If the personal ID code is invalid, the endpoint returns a bad request response with an error message.<br>
+     * - If the customer's age does not meet requirements, the endpoint returns a bad request with an error message.<br>
      * - If an unexpected error occurs, the endpoint returns an internal server error response with an error message.<br>
      * - If no valid loans can be found, the endpoint returns a not found response with an error message.<br>
      * - If a valid loan is found, a DecisionResponse is returned containing the approved loan amount and period.
@@ -53,6 +55,12 @@ public class DecisionEngineController {
 
             return ResponseEntity.ok(response);
         } catch (InvalidPersonalCodeException | InvalidLoanAmountException | InvalidLoanPeriodException e) {
+            response.setLoanAmount(null);
+            response.setLoanPeriod(null);
+            response.setErrorMessage(e.getMessage());
+
+            return ResponseEntity.badRequest().body(response);
+        } catch (InvalidAgeException e) {
             response.setLoanAmount(null);
             response.setLoanPeriod(null);
             response.setErrorMessage(e.getMessage());
